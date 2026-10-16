@@ -16,6 +16,8 @@
 #include "generator_pdf.h"
 
 // qt/kde includes
+#include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
@@ -27,6 +29,7 @@
 #include <QLayout>
 #include <QMutex>
 #include <QPainter>
+#include <QPointer>
 #include <QPrinter>
 #include <QStack>
 #include <QTemporaryFile>
@@ -36,6 +39,7 @@
 #include <QXmlStreamReader>
 
 #include <KAboutData>
+#include <KActionCollection>
 #include <KConfigDialog>
 #include <KLocalizedString>
 
@@ -65,6 +69,8 @@
 #include "pdfsignatureutils.h"
 #include "popplerembeddedfile.h"
 #include "popplerversion.h"
+#include "xfadocument.h"
+#include "xfaeditor.h"
 
 #include <functional>
 
@@ -693,6 +699,36 @@ PDFGenerator::PDFGenerator(QObject *parent, const QVariantList &args)
     setFeature(SwapBackingFile);
     setFeature(SupportsCancelling);
 
+    m_editXfaAction = new QAction(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Fill XFA Form…"), this);
+    m_editXfaAction->setEnabled(false);
+    actionCollection()->addAction(QStringLiteral("pdf_fill_xfa"), m_editXfaAction);
+    setXML(QStringLiteral("<!DOCTYPE gui SYSTEM \"kpartgui.dtd\"><gui name=\"okular_pdf_xfa\" version=\"1\"><MenuBar><Menu name=\"tools\"><Action name=\"pdf_fill_xfa\"/></Menu></MenuBar></gui>"));
+    connect(m_editXfaAction, &QAction::triggered, this, [this] {
+        if (!m_xfaDocument || !m_xfaDocument->canFillForms()) {
+            return;
+        }
+        auto editable = m_xfaDocument->clone();
+        if (!editable) {
+            Q_EMIT error(i18n("Could not open the XFA form editor."), -1);
+            return;
+        }
+        const QPointer<PDFGenerator> guard(this);
+        QPointer<Okular::Document> owner = const_cast<Okular::Document *>(document());
+        XfaEditorDialog editor(std::move(editable), documentFilePath, QApplication::activeWindow());
+        editor.exec();
+        const QString saved = editor.savedFile();
+        if (guard && owner && !saved.isEmpty()) {
+            QMetaObject::invokeMethod(
+                owner,
+                [owner, saved] {
+                    if (owner) {
+                        Q_EMIT owner->openUrl(QUrl::fromLocalFile(saved));
+                    }
+                },
+                Qt::QueuedConnection);
+        }
+    });
+
     // You only need to do it once not for each of the documents but it is cheap enough
     // so doing it all the time won't hurt either
     Poppler::setDebugErrorFunction(PDFGeneratorPopplerDebugFunction, QVariant());
@@ -747,10 +783,10 @@ Okular::Document::OpenResult PDFGenerator::loadDocumentFromDataWithPassword(cons
     // create PDFDoc for the given file
     pdfdoc = Poppler::Document::loadFromData(fileData, nullptr, nullptr);
     documentFilePath = QString();
-    return init(pagesVector, password);
+    return init(pagesVector, password, fileData);
 }
 
-Okular::Document::OpenResult PDFGenerator::init(QList<Okular::Page *> &pagesVector, const QString &password)
+Okular::Document::OpenResult PDFGenerator::init(QList<Okular::Page *> &pagesVector, const QString &password, const QByteArray &fileData)
 {
     if (!pdfdoc) {
         return Okular::Document::OpenError;
@@ -790,8 +826,33 @@ Okular::Document::OpenResult PDFGenerator::init(QList<Okular::Page *> &pagesVect
         }
     }
 
+    // XFA has its own page tree after layout; Poppler only sees the fallback PDF.
+    if (XfaDocument::isAvailable() && pdfdoc->formType() == Poppler::Document::XfaForm) {
+        QByteArray data = fileData;
+        if (data.isEmpty() && !documentFilePath.isEmpty()) {
+            QFile source(documentFilePath);
+            if (source.open(QIODevice::ReadOnly)) {
+                data = source.readAll();
+            }
+        }
+        m_xfaDocument = XfaDocument::load(std::move(data), password);
+    }
+    // PDFium's V8/XFA state must stay on the application thread. It must never be
+    // used by Okular's rendering/text workers, even when calls are serialized.
+    setFeature(Threaded, !m_xfaDocument);
+    setFeature(TextExtraction, !m_xfaDocument);
+    setFeature(FontInfo, !m_xfaDocument);
+    setFeature(SupportsCancelling, !m_xfaDocument);
+    setFeature(ReadOnly, bool(m_xfaDocument));
+    m_editXfaAction->setEnabled(m_xfaDocument && m_xfaDocument->canFillForms());
+    if (m_xfaDocument) {
+        setFeature(PrintPostscript, false);
+        setFeature(PrintNative, true);
+        setFeature(PrintToFile, true);
+    }
+
     // build Pages (currentPage was set -1 by deletePages)
-    int pageCount = pdfdoc->numPages();
+    int pageCount = m_xfaDocument ? m_xfaDocument->pageCount() : pdfdoc->numPages();
     if (pageCount < 0) {
         pdfdoc.reset();
         return Okular::Document::OpenError;
@@ -807,7 +868,14 @@ Okular::Document::OpenResult PDFGenerator::init(QList<Okular::Page *> &pagesVect
     reparseConfig();
 
     // create annotation proxy
-    annotProxy = new PopplerAnnotationProxy(pdfdoc.get(), userMutex(), &annotationsOnOpenHash);
+    if (!m_xfaDocument) {
+        annotProxy = new PopplerAnnotationProxy(pdfdoc.get(), userMutex(), &annotationsOnOpenHash);
+    }
+
+    if (m_xfaDocument) {
+        // Fallback PDF actions refer to a different page tree and form model.
+        return Okular::Document::OpenSuccess;
+    }
 
     setAdditionalDocumentAction(Okular::Document::CloseDocument, createLinkFromPopplerLink(pdfdoc->additionalAction(Poppler::Document::CloseDocument)));
     setAdditionalDocumentAction(Okular::Document::SaveDocumentStart, createLinkFromPopplerLink(pdfdoc->additionalAction(Poppler::Document::SaveDocumentStart)));
@@ -847,7 +915,7 @@ PDFGenerator::SwapBackingFileResult PDFGenerator::swapBackingFile(QString const 
 
     // Recreate links if needed since they are done on image() and image() is not called when swapping the file
     // since the page is already rendered
-    if (oldRectsGenerated.count() == rectsGenerated.count()) {
+    if (!m_xfaDocument && oldRectsGenerated.count() == rectsGenerated.count()) {
         for (int i = 0; i < oldRectsGenerated.count(); ++i) {
             if (oldRectsGenerated[i]) {
                 std::unique_ptr<Poppler::Page> pp = pdfdoc->page(i);
@@ -866,11 +934,28 @@ PDFGenerator::SwapBackingFileResult PDFGenerator::swapBackingFile(QString const 
 
 bool PDFGenerator::doCloseDocument()
 {
+    m_editXfaAction->setEnabled(false);
     // remove internal objects
     userMutex()->lock();
     delete annotProxy;
     annotProxy = nullptr;
+    m_xfaDocument.reset();
     pdfdoc = nullptr;
+    qDeleteAll(m_additionalDocumentActions);
+    m_additionalDocumentActions.clear();
+    setFeature(Threaded);
+    setFeature(TextExtraction);
+    setFeature(FontInfo);
+    setFeature(SupportsCancelling);
+    setFeature(ReadOnly, false);
+#ifdef Q_OS_WIN32
+    setFeature(PrintNative);
+    setFeature(PrintPostscript, false);
+#else
+    setFeature(PrintNative, false);
+    setFeature(PrintPostscript);
+#endif
+    setFeature(PrintToFile, Okular::FilePrinter::ps2pdfAvailable());
     userMutex()->unlock();
     docSyn.reset();
     docEmbeddedFilesDirty = true;
@@ -884,6 +969,19 @@ bool PDFGenerator::doCloseDocument()
 
 void PDFGenerator::loadPages(QList<Okular::Page *> &pagesVector, int rotation, bool clear)
 {
+    if (m_xfaDocument) {
+        for (int i = 0; i < pagesVector.size(); ++i) {
+            QSizeF size = m_xfaDocument->pageSize(i);
+            if (rotation % 2 == 1) {
+                size.transpose();
+            }
+            if (clear) {
+                delete pagesVector[i];
+            }
+            pagesVector[i] = new Okular::Page(i, size.width() / 72.0 * dpi().width(), size.height() / 72.0 * dpi().height(), Okular::Rotation0);
+        }
+        return;
+    }
     // TODO XPDF 3.01 check
     const int count = pagesVector.count();
     double w = 0, h = 0;
@@ -1032,7 +1130,7 @@ Okular::DocumentInfo PDFGenerator::generateDocumentInfo(const QSet<Okular::Docum
             docInfo.set(QStringLiteral("optimization"), pdfdoc->isLinearized() ? i18n("Yes") : i18n("No"), i18n("Optimized"));
         }
 
-        docInfo.set(Okular::DocumentInfo::Pages, QString::number(pdfdoc->numPages()));
+        docInfo.set(Okular::DocumentInfo::Pages, QString::number(m_xfaDocument ? m_xfaDocument->pageCount() : pdfdoc->numPages()));
     }
     userMutex()->unlock();
 
@@ -1041,6 +1139,10 @@ Okular::DocumentInfo PDFGenerator::generateDocumentInfo(const QSet<Okular::Docum
 
 const Okular::DocumentSynopsis *PDFGenerator::generateDocumentSynopsis()
 {
+    if (m_xfaDocument) {
+        return nullptr;
+    }
+
     if (docSyn.has_value()) {
         return &docSyn.value();
     }
@@ -1124,6 +1226,10 @@ static Okular::FontInfo::EmbedType embedTypeForPopplerFontInfo(const Poppler::Fo
 
 Okular::FontInfo::List PDFGenerator::fontsForPage(int page)
 {
+    if (m_xfaDocument) {
+        return {};
+    }
+
     Okular::FontInfo::List list;
 
     if (page != nextFontPage) {
@@ -1180,6 +1286,10 @@ const QList<Okular::EmbeddedFile *> *PDFGenerator::embeddedFiles() const
 
 PDFGenerator::PageLayout PDFGenerator::defaultPageLayout() const
 {
+    if (m_xfaDocument) {
+        return NoLayout;
+    }
+
     Poppler::Document::PageLayout defaultValue = pdfdoc->pageLayout();
 
     switch (defaultValue) {
@@ -1200,6 +1310,10 @@ PDFGenerator::PageLayout PDFGenerator::defaultPageLayout() const
 
 bool PDFGenerator::defaultPageContinuous() const
 {
+    if (m_xfaDocument) {
+        return true;
+    }
+
     Poppler::Document::PageLayout defaultValue = pdfdoc->pageLayout();
 
     if ((defaultValue == Poppler::Document::OneColumn) || (defaultValue == Poppler::Document::TwoColumnLeft) || (defaultValue == Poppler::Document::TwoColumnRight)) {
@@ -1211,11 +1325,19 @@ bool PDFGenerator::defaultPageContinuous() const
 
 QAbstractItemModel *PDFGenerator::layersModel() const
 {
+    if (m_xfaDocument) {
+        return nullptr;
+    }
+
     return pdfdoc->hasOptionalContent() ? pdfdoc->optionalContentModel() : nullptr;
 }
 
 Okular::BackendOpaqueAction::OpaqueActionResult PDFGenerator::opaqueAction(const Okular::BackendOpaqueAction *action)
 {
+    if (m_xfaDocument) {
+        return Okular::BackendOpaqueAction::DoNothing;
+    }
+
     const Poppler::Link *popplerLink = static_cast<const Poppler::Link *>(action->nativeHandle());
     if (const Poppler::LinkOCGState *ocgLink = dynamic_cast<const Poppler::LinkOCGState *>(popplerLink)) {
         pdfdoc->optionalContentModel()->applyLink(const_cast<Poppler::LinkOCGState *>(ocgLink));
@@ -1229,6 +1351,10 @@ Okular::BackendOpaqueAction::OpaqueActionResult PDFGenerator::opaqueAction(const
 
 bool PDFGenerator::isAllowed(Okular::Permission permission) const
 {
+    if (m_xfaDocument && (permission == Okular::AllowModify || permission == Okular::AllowNotes || permission == Okular::AllowFillForms)) {
+        return false;
+    }
+
     bool b = true;
     switch (permission) {
     case Okular::AllowModify:
@@ -1298,6 +1424,15 @@ static bool shouldAbortRenderCallback(const QVariant &vPayload)
 
 QImage PDFGenerator::image(Okular::PixmapRequest *request)
 {
+    if (m_xfaDocument) {
+        QMutexLocker locker(userMutex());
+        if (request->shouldAbortRender()) {
+            return {};
+        }
+        const QRect tile = request->isTile() ? request->normalizedRect().geometry(request->width(), request->height()) : QRect();
+        return m_xfaDocument->render(request->page()->number(), QSize(request->width(), request->height()), tile);
+    }
+
     // debug requests to this (xpdf) generator
     // qCDebug(OkularPdfDebug) << "id: " << request->id << " is requesting " << (request->async ? "ASYNC" : "sync") <<  " pixmap for page " << request->page->number() << " [" << request->width << " x " << request->height << "].";
 
@@ -1452,6 +1587,10 @@ static bool shouldAbortTextExtractionCallback(const QVariant &vPayload)
 
 Okular::TextPage *PDFGenerator::textPage(Okular::TextRequest *request)
 {
+    if (m_xfaDocument) {
+        return nullptr;
+    }
+
     const Okular::Page *page = request->page();
 #ifdef PDFGENERATOR_DEBUG
     qCDebug(OkularPdfDebug) << "page" << page->number();
@@ -1487,6 +1626,10 @@ Okular::TextPage *PDFGenerator::textPage(Okular::TextRequest *request)
 
 QByteArray PDFGenerator::requestFontData(const Okular::FontInfo &font)
 {
+    if (m_xfaDocument) {
+        return {};
+    }
+
     Poppler::FontInfo fi = font.nativeId().value<Poppler::FontInfo>();
     return pdfdoc->fontData(fi);
 }
@@ -1538,6 +1681,30 @@ void PDFGenerator::okularToPoppler(const Okular::NewSignatureData &oData, Popple
 #define DUMMY_QPRINTER_COPY
 Okular::Document::PrintError PDFGenerator::print(QPrinter &printer)
 {
+    if (m_xfaDocument) {
+        if (pdfOptionsPage) {
+            printer.setFullPage(pdfOptionsPage->ignorePrintMargins());
+        }
+        const QList<int> pageList = Okular::FilePrinter::pageList(printer, m_xfaDocument->pageCount(), document()->currentPage() + 1, document()->bookmarkedPageList());
+        QMutexLocker locker(userMutex());
+        const bool fitToPage = !pdfOptionsPage || pdfOptionsPage->scaleMode() != PDFOptionsPage::None;
+        switch (m_xfaDocument->print(printer, pageList, fitToPage)) {
+        case XfaDocument::PrintResult::Success:
+            return Okular::Document::NoPrintError;
+        case XfaDocument::PrintResult::NoPages:
+            return Okular::Document::NoFileToPrintError;
+        case XfaDocument::PrintResult::InvalidPrinter:
+            return Okular::Document::InvalidPrinterStatePrintError;
+        case XfaDocument::PrintResult::InvalidPageSize:
+            return Okular::Document::InvalidPageSizePrintError;
+        case XfaDocument::PrintResult::RenderError:
+            return Okular::Document::FileConversionPrintError;
+        case XfaDocument::PrintResult::PrinterError:
+            return Okular::Document::UnknownPrintError;
+        }
+        return Okular::Document::UnknownPrintError;
+    }
+
     bool printAnnots = true;
     bool forceRasterize = false;
     PDFOptionsPage::ScaleMode scaleMode = PDFOptionsPage::FitToPrintableArea;
@@ -1698,6 +1865,18 @@ Okular::Document::PrintError PDFGenerator::print(QPrinter &printer)
 
 QVariant PDFGenerator::metaData(const QString &key, const QVariant &option) const
 {
+    if (key == QLatin1String("HasXfaEditor")) {
+        return m_xfaDocument && m_xfaDocument->canFillForms();
+    }
+    if (key == QLatin1String("HasReadOnlyXfaForm")) {
+        return bool(m_xfaDocument);
+    }
+    if (m_xfaDocument && (key == QLatin1String("DocumentScripts") || key == QLatin1String("NamedViewport") || key == QLatin1String("FormCalculateOrder"))) {
+        return {};
+    }
+    if (m_xfaDocument && (key == QLatin1String("OpenTOC") || key == QLatin1String("StartFullScreen"))) {
+        return false;
+    }
     if (key == QLatin1String("StartFullScreen")) {
         QMutexLocker ml(userMutex());
         // asking for the 'start in fullscreen mode' (pdf property)
@@ -1735,11 +1914,14 @@ QVariant PDFGenerator::metaData(const QString &key, const QVariant &option) cons
         return pdfdoc->scripts();
     } else if (key == QLatin1String("HasUnsupportedXfaForm")) {
         QMutexLocker ml(userMutex());
-        return pdfdoc->formType() == Poppler::Document::XfaForm;
+        return pdfdoc->formType() == Poppler::Document::XfaForm && !m_xfaDocument;
     } else if (key == QLatin1String("FormCalculateOrder")) {
         QMutexLocker ml(userMutex());
         return QVariant::fromValue<QList<int>>(pdfdoc->formCalculateOrder());
     } else if (key == QLatin1String("GeneratorExtraDescription")) {
+        if (m_xfaDocument) {
+            return i18n("Using Poppler %1 and PDFium for XFA rendering and form filling", Poppler::Version::string());
+        }
         if (Poppler::Version::string() == QStringLiteral(POPPLER_VERSION)) {
             return i18n("Using Poppler %1", Poppler::Version::string());
         } else {
@@ -1825,6 +2007,10 @@ bool PDFGenerator::setDocumentRenderHints()
 
 Okular::ExportFormat::List PDFGenerator::exportFormats() const
 {
+    if (m_xfaDocument) {
+        return {};
+    }
+
     static Okular::ExportFormat::List formats;
     if (formats.isEmpty()) {
         formats.append(Okular::ExportFormat::standardFormat(Okular::ExportFormat::PlainText));
@@ -1835,6 +2021,10 @@ Okular::ExportFormat::List PDFGenerator::exportFormats() const
 
 bool PDFGenerator::exportTo(const QString &fileName, const Okular::ExportFormat &format)
 {
+    if (m_xfaDocument) {
+        return false;
+    }
+
     if (format.mimeType().inherits(QStringLiteral("text/plain"))) {
         QFile f(fileName);
         if (!f.open(QIODevice::WriteOnly)) {
@@ -2123,6 +2313,10 @@ Okular::PrintOptionsWidgetInterface *PDFGenerator::printConfigurationWidget() co
 
 bool PDFGenerator::supportsOption(SaveOption option) const
 {
+    if (m_xfaDocument) {
+        return false;
+    }
+
     switch (option) {
     case SaveChanges: {
         return true;
@@ -2134,6 +2328,13 @@ bool PDFGenerator::supportsOption(SaveOption option) const
 
 bool PDFGenerator::save(const QString &fileName, SaveOptions options, QString *errorText)
 {
+    if (m_xfaDocument) {
+        if (errorText) {
+            *errorText = i18n("Use Tools → Fill XFA Form… to edit this form and save a filled copy.");
+        }
+        return false;
+    }
+
     Q_UNUSED(errorText);
     std::unique_ptr<Poppler::PDFConverter> pdfConv = pdfdoc->pdfConverter();
 
@@ -2180,6 +2381,10 @@ Okular::AnnotationProxy *PDFGenerator::annotationProxy() const
 
 bool PDFGenerator::canSign() const
 {
+    if (m_xfaDocument) {
+        return false;
+    }
+
     return !Poppler::availableCryptoSignBackends().empty();
 }
 

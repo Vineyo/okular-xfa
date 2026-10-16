@@ -24,6 +24,7 @@
 #include <core/generator.h>
 #include <core/printoptionswidget.h>
 #include <interfaces/configinterface.h>
+#include <interfaces/guiinterface.h>
 #include <interfaces/printinterface.h>
 #include <interfaces/saveinterface.h>
 
@@ -31,6 +32,8 @@
 
 class PDFOptionsPage;
 class PopplerAnnotationProxy;
+class XfaDocument;
+class QAction;
 
 /**
  * @short A generator that builds contents from a PDF document.
@@ -44,13 +47,14 @@ class PopplerAnnotationProxy;
  * contents from out OutputDevs when rendering finishes.
  *
  */
-class PDFGenerator : public Okular::Generator, public Okular::ConfigInterface, public Okular::PrintInterface, public Okular::SaveInterface
+class PDFGenerator : public Okular::Generator, public Okular::ConfigInterface, public Okular::PrintInterface, public Okular::SaveInterface, public Okular::GuiInterface
 {
     Q_OBJECT
     Q_INTERFACES(Okular::Generator)
     Q_INTERFACES(Okular::ConfigInterface)
     Q_INTERFACES(Okular::PrintInterface)
     Q_INTERFACES(Okular::SaveInterface)
+    Q_INTERFACES(Okular::GuiInterface)
 
 public:
     PDFGenerator(QObject *parent, const QVariantList &args);
@@ -126,7 +130,7 @@ protected:
     Okular::TextPage *textPage(Okular::TextRequest *request) override;
 
 private:
-    Okular::Document::OpenResult init(QList<Okular::Page *> &pagesVector, const QString &password);
+    Okular::Document::OpenResult init(QList<Okular::Page *> &pagesVector, const QString &password, const QByteArray &fileData = {});
 
     // fetch annotations from the pdf file and add they to the page
     void addAnnotations(Poppler::Page *popplerPage, Okular::Page *page);
@@ -144,6 +148,8 @@ private:
 
     // poppler dependent stuff
     std::unique_ptr<Poppler::Document> pdfdoc;
+    std::unique_ptr<XfaDocument> m_xfaDocument;
+    QAction *m_editXfaAction;
 
     void xrefReconstructionHandler();
 

@@ -2979,6 +2979,10 @@ QUrl Document::currentDocument() const
 
 bool Document::isAllowed(Permission action) const
 {
+    // A backend capability restriction is independent of a file's DRM flags.
+    if (d->m_generator && d->m_generator->hasFeature(Generator::ReadOnly) && (action == AllowModify || action == AllowNotes || action == AllowFillForms)) {
+        return false;
+    }
     if (action == Okular::AllowNotes && (d->m_docdataMigrationNeeded || !d->m_annotationEditingEnabled)) {
         return false;
     }

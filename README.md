@@ -43,6 +43,10 @@ See https://community.kde.org/Infrastructure/GitLab for an introduction.
 
 ### Build instructions
 
+Experimental XFA viewing, printing and form filling can be enabled with optional
+PDFium and qpdf dependencies. See [README.xfa.md](README.xfa.md) for its scope, dependencies
+and tests.
+
 Okular can be built like many other applications developed by KDE.
 See https://community.kde.org/Get_Involved/development for an introduction.
 

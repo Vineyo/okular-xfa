@@ -1600,6 +1600,15 @@ bool Part::openFile()
         m_formsMessage->setIcon(QIcon::fromTheme(QStringLiteral("dialog-warning")));
         m_formsMessage->setMessageType(KMessageWidget::Warning);
         m_formsMessage->setVisible(true);
+    } else if (ok && Okular::Settings::showEmbeddedContentMessages() && m_document->metaData(QStringLiteral("HasReadOnlyXfaForm")).toBool()) {
+        if (m_document->metaData(QStringLiteral("HasXfaEditor")).toBool()) {
+            m_formsMessage->setText(i18n("To fill this XFA form and save a copy, choose Tools → Fill XFA Form…. The main viewer displays XFA pages in read-only mode."));
+        } else {
+            m_formsMessage->setText(i18n("This XFA document is displayed in read-only mode. Filling forms, text search, annotations and digital signing are not supported."));
+        }
+        m_formsMessage->setIcon(QIcon::fromTheme(QStringLiteral("dialog-information")));
+        m_formsMessage->setMessageType(KMessageWidget::Information);
+        m_formsMessage->setVisible(true);
     }
     // m_pageView->toggleFormsAction() may be null on dummy mode
     else if (ok && Okular::Settings::showEmbeddedContentMessages() && m_pageView->toggleFormsAction() && m_pageView->toggleFormsAction()->isEnabled()) {

@@ -2,6 +2,7 @@ remove_definitions(-DTRANSLATION_DOMAIN="okular")
 add_definitions(-DTRANSLATION_DOMAIN="okular_poppler")
 
 add_subdirectory( conf )
+add_subdirectory( xfa )
 
 set(CMAKE_REQUIRED_LIBRARIES Poppler::Qt6 Qt6::Core Qt6::Gui)
 
@@ -28,7 +29,7 @@ kconfig_add_kcfg_files(okularGenerator_poppler_PART_SRCS GENERATE_MOC conf/pdfse
 
 okular_add_generator(okularGenerator_poppler ${okularGenerator_poppler_PART_SRCS})
 
-target_link_libraries(okularGenerator_poppler okularcore KF6::I18n KF6::Completion KF6::KIOWidgets Poppler::Qt6 Qt6::Xml)
+target_link_libraries(okularGenerator_poppler okularcore KF6::I18n KF6::Completion KF6::KIOWidgets KF6::XmlGui Poppler::Qt6 Qt6::Xml okular_xfa_ui)
 
 ########### autotests ###############
 
@@ -37,6 +38,15 @@ if(BUILD_TESTING)
         TEST_NAME "imageScalingTest"
         LINK_LIBRARIES Qt6::Test Qt6::Gui
     )
+    if(ENABLE_XFA)
+        ecm_add_test(autotests/testxfagenerator.cpp
+            TEST_NAME "xfaGeneratorTest"
+            LINK_LIBRARIES Qt6::Test Qt6::Widgets Qt6::PrintSupport Qt6::Xml okularcore Poppler::Qt6
+        )
+        target_include_directories(xfaGeneratorTest PRIVATE "${CMAKE_BINARY_DIR}")
+        add_dependencies(xfaGeneratorTest okularGenerator_poppler)
+        set_tests_properties(xfaGeneratorTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
 endif()
 
 ########### install files ###############

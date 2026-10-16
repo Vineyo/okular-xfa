@@ -2,6 +2,7 @@ CMakeLists.txt.user*
 *.kdev4
 *.swp
 /build*/
+/install/
 .cmake/
 
 # LSP & IDE

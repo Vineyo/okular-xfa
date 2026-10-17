@@ -31,6 +31,7 @@ if(Poppler_Qt6_FOUND)
             TEST_NAME "parttest"
             LINK_LIBRARIES Qt6::Widgets Qt6::Test Qt6::Xml okularcore okularpart
         )
+        target_compile_definitions(parttest PRIVATE HAVE_PDFIUM_XFA=$<BOOL:${ENABLE_XFA}>)
     endif()
 
     ecm_add_test(visibilitytest.cpp

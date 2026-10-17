@@ -1763,9 +1763,14 @@ bool Part::openFile()
             QMetaObject::invokeMethod(this, "slotShowPresentation", Qt::QueuedConnection);
         }
     }
-    m_generatorGuiClient = factory() ? m_document->guiClient() : nullptr;
+    m_generatorGuiClient = m_document->guiClient();
     if (m_generatorGuiClient) {
-        factory()->addClient(m_generatorGuiClient);
+        // Keep generator actions with their part, including when a document
+        // opens before GUI activation or the shell switches between tabs.
+        insertChildClient(m_generatorGuiClient);
+        if (factory()) {
+            factory()->addClient(m_generatorGuiClient);
+        }
     }
     if (m_cliPrint) {
         m_cliPrint = false;
@@ -1979,7 +1984,10 @@ bool Part::closeUrl(bool promptToSave)
     }
     m_fileWasRemoved = false;
     if (m_generatorGuiClient) {
-        factory()->removeClient(m_generatorGuiClient);
+        if (auto *guiFactory = m_generatorGuiClient->factory()) {
+            guiFactory->removeClient(m_generatorGuiClient);
+        }
+        removeChildClient(m_generatorGuiClient);
     }
     m_generatorGuiClient = nullptr;
     m_document->closeDocument();

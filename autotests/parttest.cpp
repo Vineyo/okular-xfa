@@ -17,6 +17,7 @@
 #include "../core/form.h"
 #include "../core/misc.h"
 #include "../core/page.h"
+#include "../generators/poppler/autotests/xfafixture.h"
 #include "../part/pageview.h"
 #include "../part/part.h"
 #include "../part/presentationwidget.h"
@@ -28,7 +29,9 @@
 #include <KActionCollection>
 #include <KActionMenu>
 #include <KConfigDialog>
+#include <KParts/MainWindow>
 #include <KParts/OpenUrlArguments>
+#include <KXMLGUIFactory>
 
 #include <QAbstractItemModelTester>
 #include <QApplication>
@@ -38,6 +41,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QTabletEvent>
 #include <QTemporaryDir>
@@ -111,6 +115,8 @@ private Q_SLOTS:
     void testTabletProximityBehavior();
     void testOpenPrintPreview();
     void testMouseModeMenu();
+    void testGeneratorMenu_data();
+    void testGeneratorMenu();
     void testFullScreenRequest();
     void testZoomInFacingPages();
     void testLinkWithCrop();
@@ -2273,6 +2279,98 @@ void PartTest::testMouseModeMenu()
     // Test activating table selection mode
     mouseModeActionMenu->actions().at(2)->trigger();
     QCOMPARE(Okular::Settings::mouseMode(), (int)Okular::Settings::EnumMouseMode::TableSelect);
+}
+
+void PartTest::testGeneratorMenu_data()
+{
+    QTest::addColumn<bool>("attachBeforeOpen");
+    QTest::addColumn<bool>("useXfa");
+    QTest::newRow("active-pdf") << true << false;
+    QTest::newRow("inactive-pdf") << false << false;
+#if HAVE_PDFIUM_XFA
+    QTest::newRow("active-xfa") << true << true;
+    QTest::newRow("inactive-xfa") << false << true;
+#endif
+}
+
+void PartTest::testGeneratorMenu()
+{
+    QFETCH(bool, attachBeforeOpen);
+    QFETCH(bool, useXfa);
+    QTemporaryFile xfaFile;
+    QString documentPath = QStringLiteral(KDESRCDIR "data/file1.pdf");
+    if (useXfa) {
+        QVERIFY(xfaFile.open());
+        const QByteArray fixture = xfaFixture();
+        QCOMPARE(xfaFile.write(fixture), fixture.size());
+        QVERIFY(xfaFile.flush());
+        documentPath = xfaFile.fileName();
+    }
+    class TestWindow : public KParts::MainWindow
+    {
+    public:
+        using KParts::MainWindow::createGUI;
+        using KParts::MainWindow::setXMLFile;
+    } window;
+    QTemporaryFile uiFile;
+    QVERIFY(uiFile.open());
+    uiFile.write("<gui name=\"generator-menu-test\" version=\"1\"><MenuBar><Menu name=\"tools\"><text>Tools</text></Menu></MenuBar></gui>");
+    QVERIFY(uiFile.flush());
+    window.setXMLFile(uiFile.fileName());
+    window.setupGUI(KXmlGuiWindow::Keys | KXmlGuiWindow::ToolBar | KXmlGuiWindow::Save);
+    Okular::Part part(nullptr, {});
+    const auto cleanup = qScopeGuard([&window] { window.createGUI(nullptr); });
+    if (attachBeforeOpen) {
+        window.createGUI(&part);
+    }
+    QVERIFY(openDocument(&part, documentPath));
+    KXMLGUIClient *client = part.m_document->guiClient();
+    QVERIFY(client);
+    QAction *action = client->actionCollection()->action(QStringLiteral("pdf_fill_xfa"));
+    QVERIFY(action);
+    window.createGUI(&part);
+    auto *toolsMenu = window.findChild<QMenu *>(QStringLiteral("tools"));
+    QVERIFY(toolsMenu);
+    QCOMPARE(toolsMenu->actions().count(action), 1);
+    QCOMPARE(action->isEnabled(), useXfa);
+    if (useXfa) {
+        bool editorOpened = false;
+        QTimer::singleShot(0, [&editorOpened] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            editorOpened = dialog && QByteArray(dialog->metaObject()->className()) == "XfaEditorDialog";
+            if (dialog) {
+                dialog->reject();
+            }
+        });
+        action->trigger();
+        QVERIFY(editorOpened);
+    }
+
+    // Switching tabs must remove the old generator's actions and restore
+    // them exactly once when its document becomes active again.
+    window.createGUI(nullptr);
+    QVERIFY(!client->factory());
+    window.createGUI(&part);
+    toolsMenu = window.findChild<QMenu *>(QStringLiteral("tools"));
+    QVERIFY(toolsMenu);
+    QCOMPARE(toolsMenu->actions().count(action), 1);
+
+    // Closing an inactive tab must also detach its generator safely.
+    window.createGUI(nullptr);
+    QVERIFY(part.closeUrl());
+    QVERIFY(!part.childClients().contains(client));
+    QVERIFY(openDocument(&part, documentPath));
+    window.createGUI(&part);
+    client = part.m_document->guiClient();
+    QVERIFY(client);
+    action = client->actionCollection()->action(QStringLiteral("pdf_fill_xfa"));
+    QVERIFY(action);
+    toolsMenu = window.findChild<QMenu *>(QStringLiteral("tools"));
+    QVERIFY(toolsMenu);
+    QCOMPARE(toolsMenu->actions().count(action), 1);
+    QVERIFY(part.closeUrl());
+    QVERIFY(!toolsMenu->actions().contains(action));
+    window.createGUI(nullptr);
 }
 
 void PartTest::testFullScreenRequest()

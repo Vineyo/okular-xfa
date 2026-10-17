@@ -194,5 +194,8 @@ the sample's added date widgets and rejection of ambiguous names. The saved
 dates were independently checked in the PDF values, appearances and rendered
 page. Interactive use confirmed text and checkbox editing and saving.
 
-The full-application `xfaGeneratorTest` timed out during initialization in that
-environment, so its automated integration checks remain unverified.
+The full-application `xfaGeneratorTest` subsequently passed all 7 QtTest checks
+using an isolated D-Bus session. GUI regression tests also verify that the
+Tools menu includes the editor action when a document opens before or after
+GUI activation, opens the XFA editor, and retains the action across tab switches
+and document reopening. Ordinary PDFs keep the action disabled.

@@ -46,9 +46,9 @@ inline QByteArray xfaFixture(int pageCount = 1, bool foreground = false, bool ma
         QByteArray("<< /Type /Catalog /Pages 2 0 R ") + (ordinary ? "" : "/AcroForm 3 0 R ") + (foreground ? "" : "/NeedsRendering true ") + ">>",
         "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
         "<< /Fields [] /XFA [(preamble) 7 0 R (config) 8 0 R (template) 9 0 R (datasets) 10 0 R (postamble) 11 0 R] >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 5 0 R >>",
-        xfaStream("0 0 0 rg 0 0 200 200 re f"),
-        "<< >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>",
+        xfaStream(QByteArray("0 0 0 rg 0 0 200 200 re f") + ((foreground || ordinary) ? " BT /F1 12 Tf 20 180 Td (Searchable static form) Tj ET" : "")),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         xfaStream("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\">"),
         xfaStream(QByteArray("<config xmlns=\"http://www.xfa.org/schema/xci/3.0/\"><present><pdf><interactive>1</interactive></pdf></present>\n"
                              "            <acrobat><acrobat7><dynamicRender>") +

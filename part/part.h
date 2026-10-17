@@ -419,6 +419,7 @@ private:
     QAction *m_pasteAnnotation;
     QAction *m_selectAll;
     QAction *m_selectCurrentPage;
+    QAction *m_fillXfaForm;
     QAction *m_find;
     QAction *m_findNext;
     QAction *m_findPrev;

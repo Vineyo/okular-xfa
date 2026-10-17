@@ -712,6 +712,20 @@ void Part::setupViewerActions()
     m_selectAll = nullptr;
     m_selectCurrentPage = nullptr;
 
+    // Keep the menu structure stable for native/global menu exporters. Only
+    // availability changes when a document opens; the backend owns the editor.
+    m_fillXfaForm = ac->addAction(QStringLiteral("fill_xfa_form"));
+    m_fillXfaForm->setText(i18n("Fill XFA Form…"));
+    m_fillXfaForm->setIcon(QIcon::fromTheme(QStringLiteral("document-edit")));
+    m_fillXfaForm->setEnabled(false);
+    connect(m_fillXfaForm, &QAction::triggered, this, [this] {
+        if (auto *client = m_document->guiClient()) {
+            if (auto *action = client->actionCollection()->action(QStringLiteral("pdf_fill_xfa"))) {
+                action->trigger();
+            }
+        }
+    });
+
     // Find and other actions
     m_find = KStandardAction::find(this, SLOT(slotShowFindBar()), ac);
     QList<QKeySequence> s = m_find->shortcuts();
@@ -1572,6 +1586,7 @@ bool Part::openFile()
     // update one-time actions
     const bool ok = openResult == Document::OpenSuccess;
     Q_EMIT enableCloseAction(ok);
+    m_fillXfaForm->setEnabled(ok && m_document->metaData(QStringLiteral("HasXfaEditor")).toBool());
     m_find->setEnabled(ok && canSearch);
     m_findNext->setEnabled(ok && canSearch);
     m_findPrev->setEnabled(ok && canSearch);
@@ -1604,7 +1619,7 @@ bool Part::openFile()
         if (m_document->metaData(QStringLiteral("HasXfaEditor")).toBool()) {
             m_formsMessage->setText(i18n("To fill this XFA form and save a copy, choose Tools → Fill XFA Form…. The main viewer displays XFA pages in read-only mode."));
         } else {
-            m_formsMessage->setText(i18n("This XFA document is displayed in read-only mode. Filling forms, text search, annotations and digital signing are not supported."));
+            m_formsMessage->setText(i18n("This XFA document is displayed in read-only mode. Filling forms, annotations and digital signing are not supported."));
         }
         m_formsMessage->setIcon(QIcon::fromTheme(QStringLiteral("dialog-information")));
         m_formsMessage->setMessageType(KMessageWidget::Information);
@@ -1937,6 +1952,7 @@ bool Part::closeUrl(bool promptToSave)
 
     slotHidePresentation();
     Q_EMIT enableCloseAction(false);
+    m_fillXfaForm->setEnabled(false);
     m_find->setEnabled(false);
     m_findNext->setEnabled(false);
     m_findPrev->setEnabled(false);

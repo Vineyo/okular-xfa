@@ -155,8 +155,11 @@ Complex repeaters and form-specific scripts need
 further compatibility work. This is experimental support, not full Adobe
 Reader compatibility or a form-design editor.
 
-Text search/selection/export, annotations, PDF outlines/layers/links and digital
-signing remain unavailable in the XFA path. Form scripts run in PDFium's V8
+Text search and selection work on the existing PDF text layer of foreground
+(static) XFA forms. Dynamic XFA pages still lack text extraction; field values
+rendered only by XFA are not included in the PDF text layer. Text export,
+annotations, PDF outlines/layers/links and digital signing remain unavailable
+in the XFA path. Form scripts run in PDFium's V8
 runtime for layout and interaction. Host callbacks provide widget timers but
 not network access, arbitrary local-file access, email, submission, navigation,
 script dialogs or script-triggered printing. This is an in-process engine.

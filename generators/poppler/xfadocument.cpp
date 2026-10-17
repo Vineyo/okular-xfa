@@ -245,6 +245,11 @@ std::unique_ptr<XfaDocument> XfaDocument::clone() const
     return onApplicationThread() ? load(d->bytes, d->password) : nullptr;
 }
 
+bool XfaDocument::hasPdfTextLayer() const
+{
+    return onApplicationThread() && FPDF_GetFormType(d->document) == FORMTYPE_XFA_FOREGROUND;
+}
+
 bool XfaDocument::canFillForms() const
 {
     return onApplicationThread() && (FPDF_GetDocPermissions(d->document) & (1UL << 8));
@@ -682,6 +687,10 @@ QImage XfaDocument::render(int, const QSize &, const QRect &, bool) const
 std::unique_ptr<XfaDocument> XfaDocument::clone() const
 {
     return nullptr;
+}
+bool XfaDocument::hasPdfTextLayer() const
+{
+    return false;
 }
 bool XfaDocument::canFillForms() const
 {

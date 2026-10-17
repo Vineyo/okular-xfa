@@ -701,8 +701,8 @@ PDFGenerator::PDFGenerator(QObject *parent, const QVariantList &args)
 
     m_editXfaAction = new QAction(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Fill XFA Form…"), this);
     m_editXfaAction->setEnabled(false);
+    m_editXfaAction->setVisible(false); // Invoked through the stable Part action.
     actionCollection()->addAction(QStringLiteral("pdf_fill_xfa"), m_editXfaAction);
-    setXML(QStringLiteral("<!DOCTYPE gui SYSTEM \"kpartgui.dtd\"><gui name=\"okular_pdf_xfa\" version=\"1\"><MenuBar><Menu name=\"tools\"><Action name=\"pdf_fill_xfa\"/></Menu></MenuBar></gui>"));
     connect(m_editXfaAction, &QAction::triggered, this, [this] {
         if (!m_xfaDocument || !m_xfaDocument->canFillForms()) {
             return;
@@ -840,7 +840,7 @@ Okular::Document::OpenResult PDFGenerator::init(QList<Okular::Page *> &pagesVect
     // PDFium's V8/XFA state must stay on the application thread. It must never be
     // used by Okular's rendering/text workers, even when calls are serialized.
     setFeature(Threaded, !m_xfaDocument);
-    setFeature(TextExtraction, !m_xfaDocument);
+    setFeature(TextExtraction, !m_xfaDocument || m_xfaDocument->hasPdfTextLayer());
     setFeature(FontInfo, !m_xfaDocument);
     setFeature(SupportsCancelling, !m_xfaDocument);
     setFeature(ReadOnly, bool(m_xfaDocument));
@@ -1587,7 +1587,7 @@ static bool shouldAbortTextExtractionCallback(const QVariant &vPayload)
 
 Okular::TextPage *PDFGenerator::textPage(Okular::TextRequest *request)
 {
-    if (m_xfaDocument) {
+    if (m_xfaDocument && !m_xfaDocument->hasPdfTextLayer()) {
         return nullptr;
     }
 

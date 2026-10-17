@@ -9,6 +9,8 @@
 #include <QTest>
 #include <config-okular.h>
 
+#include <KActionCollection>
+#include <KCommandBar>
 #include <KConfigGroup>
 #include <KLineEdit>
 #include <KRecentFilesAction>
@@ -109,6 +111,7 @@ private Q_SLOTS:
     void testOpenInvalidFiles_data();
     void testOpenInvalidFiles();
     void testOpenTheSameFileSeveralTimes();
+    void testFindAction();
 
 private:
 };
@@ -718,6 +721,32 @@ void MainShellTest::testMiddleButtonCloseUndo()
     // Undo tab close
     s->undoCloseTab();
     QCOMPARE(s->m_tabWidget->count(), paths.size());
+}
+
+void MainShellTest::testFindAction()
+{
+    const auto options = ShellUtils::serializeOptions(false, false, false, false, false, QString(), QString(), QString());
+    QCOMPARE(Okular::main({QStringLiteral(KDESRCDIR "data/file1.pdf")}, options), Okular::Success);
+    Shell *shell = findShell();
+    QVERIFY(shell);
+    auto *action = shell->actionCollection()->action(QStringLiteral("open_kcommand_bar"));
+    QVERIFY(action);
+    QVERIFY(action->isEnabled());
+    QVERIFY(shell->isCommandBarEnabled());
+    action->trigger();
+    auto *bar = shell->findChild<KCommandBar *>();
+    QVERIFY(bar);
+    QVERIFY(bar->isVisible());
+    QTest::qWait(200);
+    QVERIFY(bar->isVisible());
+    QTest::keyClick(bar, Qt::Key_Escape);
+    QTRY_VERIFY(shell->findChild<KCommandBar *>() == nullptr);
+    shell->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(shell));
+    QTest::keyClick(shell, Qt::Key_I, Qt::ControlModifier | Qt::AltModifier);
+    QTRY_VERIFY(shell->findChild<KCommandBar *>());
+    QVERIFY(shell->findChild<KCommandBar *>()->isVisible());
+    shell->findChild<KCommandBar *>()->hide();
 }
 
 QTEST_MAIN(MainShellTest)

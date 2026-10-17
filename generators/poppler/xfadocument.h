@@ -31,6 +31,8 @@ public:
     static std::unique_ptr<XfaDocument> load(QByteArray data, const QString &password);
     ~XfaDocument();
 
+    // Foreground XFA retains the original PDF page tree and text coordinates.
+    bool hasPdfTextLayer() const;
     int pageCount() const;
     QSizeF pageSize(int page) const;
     QImage render(int page, const QSize &fullSize, const QRect &tile = {}, bool printing = false) const;

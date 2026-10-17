@@ -18,6 +18,7 @@
 #include "../core/misc.h"
 #include "../core/page.h"
 #include "../generators/poppler/autotests/xfafixture.h"
+#include "../part/findbar.h"
 #include "../part/pageview.h"
 #include "../part/part.h"
 #include "../part/presentationwidget.h"
@@ -117,6 +118,7 @@ private Q_SLOTS:
     void testMouseModeMenu();
     void testGeneratorMenu_data();
     void testGeneratorMenu();
+    void testStaticXfaSearchAction();
     void testFullScreenRequest();
     void testZoomInFacingPages();
     void testLinkWithCrop();
@@ -2323,12 +2325,20 @@ void PartTest::testGeneratorMenu()
     if (attachBeforeOpen) {
         window.createGUI(&part);
     }
+    QAction *action = part.actionCollection()->action(QStringLiteral("fill_xfa_form"));
+    QVERIFY(action);
+    if (attachBeforeOpen) {
+        auto *menu = window.findChild<QMenu *>(QStringLiteral("tools"));
+        QVERIFY(menu);
+        QCOMPARE(menu->actions().count(action), 1);
+        QVERIFY(!action->isEnabled());
+    }
     QVERIFY(openDocument(&part, documentPath));
     KXMLGUIClient *client = part.m_document->guiClient();
     QVERIFY(client);
-    QAction *action = client->actionCollection()->action(QStringLiteral("pdf_fill_xfa"));
-    QVERIFY(action);
-    window.createGUI(&part);
+    if (!attachBeforeOpen) {
+        window.createGUI(&part);
+    }
     auto *toolsMenu = window.findChild<QMenu *>(QStringLiteral("tools"));
     QVERIFY(toolsMenu);
     QCOMPARE(toolsMenu->actions().count(action), 1);
@@ -2363,14 +2373,36 @@ void PartTest::testGeneratorMenu()
     window.createGUI(&part);
     client = part.m_document->guiClient();
     QVERIFY(client);
-    action = client->actionCollection()->action(QStringLiteral("pdf_fill_xfa"));
+    QCOMPARE(action, part.actionCollection()->action(QStringLiteral("fill_xfa_form")));
     QVERIFY(action);
     toolsMenu = window.findChild<QMenu *>(QStringLiteral("tools"));
     QVERIFY(toolsMenu);
     QCOMPARE(toolsMenu->actions().count(action), 1);
     QVERIFY(part.closeUrl());
-    QVERIFY(!toolsMenu->actions().contains(action));
+    QCOMPARE(toolsMenu->actions().count(action), 1);
+    QVERIFY(!action->isEnabled());
     window.createGUI(nullptr);
+}
+
+void PartTest::testStaticXfaSearchAction()
+{
+#if HAVE_PDFIUM_XFA
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    const auto bytes = xfaFixture(1, true);
+    QCOMPARE(file.write(bytes), bytes.size());
+    QVERIFY(file.flush());
+    Okular::Part part(nullptr, {});
+    QVERIFY(openDocument(&part, file.fileName()));
+    auto *find = part.actionCollection()->action(QStringLiteral("edit_find"));
+    QVERIFY(find);
+    QVERIFY(find->isEnabled());
+    QVERIFY(part.m_findBar->isHidden());
+    find->trigger();
+    QVERIFY(!part.m_findBar->isHidden());
+    QVERIFY(part.closeUrl());
+    QVERIFY(!find->isEnabled());
+#endif
 }
 
 void PartTest::testFullScreenRequest()

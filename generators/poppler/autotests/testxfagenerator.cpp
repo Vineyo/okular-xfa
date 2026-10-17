@@ -7,10 +7,12 @@
 
 #include "core/document.h"
 #include "core/page.h"
+#include "core/textpage.h"
 #include "settings_core.h"
 
 #include <QMimeDatabase>
 #include <QPrinter>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
@@ -55,6 +57,40 @@ private Q_SLOTS:
         QVERIFY(!document.canSaveChanges());
         QVERIFY(!document.canSign());
         QVERIFY(document.metaData(QStringLiteral("DocumentScripts"), QStringLiteral("JavaScript")).toStringList().isEmpty());
+    }
+
+    void staticXfaSearch()
+    {
+        QTemporaryFile file;
+        QVERIFY(writeFixture(file, xfaFixture(1, true)));
+        Okular::Document document(nullptr);
+        QCOMPARE(open(document, file), Okular::Document::OpenSuccess);
+        QVERIFY(document.metaData(QStringLiteral("HasReadOnlyXfaForm")).toBool());
+        QVERIFY(document.supportsSearching());
+        QSignalSpy spy(&document, &Okular::Document::searchFinished);
+        document.searchText(42, QStringLiteral("Searchable"), true, Qt::CaseSensitive, Okular::Document::AllDocument, false, QColor(Qt::yellow));
+        QTRY_COMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(1).value<Okular::Document::SearchStatus>(), Okular::Document::MatchFound);
+        QVERIFY(document.page(0)->hasHighlights(42));
+        document.searchText(43, QStringLiteral("not in this form"), true, Qt::CaseSensitive, Okular::Document::AllDocument, false, QColor(Qt::yellow));
+        QTRY_COMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(1).at(1).value<Okular::Document::SearchStatus>(), Okular::Document::NoMatchFound);
+    }
+
+    void sampleFormSearch()
+    {
+        const QString fileName = qEnvironmentVariable("OKULAR_XFA_TEST_PDF");
+        if (fileName.isEmpty()) {
+            QSKIP("Set OKULAR_XFA_TEST_PDF to check search on a supplied static XFA form.");
+        }
+        Okular::Document document(nullptr);
+        QCOMPARE(document.openDocument(fileName, QUrl::fromLocalFile(fileName), QMimeDatabase().mimeTypeForName(QStringLiteral("application/pdf"))), Okular::Document::OpenSuccess);
+        QVERIFY(document.metaData(QStringLiteral("HasReadOnlyXfaForm")).toBool());
+        QVERIFY(document.supportsSearching());
+        QSignalSpy spy(&document, &Okular::Document::searchFinished);
+        document.searchText(44, QStringLiteral("护照"), true, Qt::CaseInsensitive, Okular::Document::AllDocument, false, QColor(Qt::yellow));
+        QTRY_COMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(1).value<Okular::Document::SearchStatus>(), Okular::Document::MatchFound);
     }
 
     void fallbackOnMalformedXfa()
